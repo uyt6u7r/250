@@ -2,9 +2,12 @@ import { GoogleGenAI } from "@google/genai";
 import { GameState, Suit } from "../types";
 
 const getGeminiClient = () => {
-  const apiKey = process.env.API_KEY;
+  // Support both Vite's import.meta.env and standard process.env
+  // Note: For GitHub Pages/Vite, use VITE_API_KEY in your .env file or build secrets
+  const apiKey = (import.meta as any).env?.VITE_API_KEY || process.env.API_KEY;
+  
   if (!apiKey) {
-    console.warn("API Key not found in process.env.API_KEY");
+    console.warn("API Key not found. Please set VITE_API_KEY environment variable.");
     return null;
   }
   return new GoogleGenAI({ apiKey });

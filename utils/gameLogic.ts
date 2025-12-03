@@ -83,7 +83,7 @@ export const setupTutorialGame = (): GameState => {
   ];
 
   const deck = [
-      mkCard(Suit.HEARTS, Rank.ACE), // Card drawn by user (Changed to ACE so total points end up being 4)
+      mkCard(Suit.HEARTS, Rank.FIVE), // Card drawn by user
       mkCard(Suit.SPADES, Rank.ACE), // Card drawn by bot
       ...createDeck(2) // Rest is random
   ];

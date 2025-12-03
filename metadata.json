@@ -1,5 +1,5 @@
 {
-  "name": " Sevens & Melds Strategy",
+  "name": "Sevens & Melds Strategy",
   "description": "A strategic card game for 2-6 players featuring melds, sequence building, and a unique 'Pong' mechanic. Includes AI-powered move suggestions.",
   "requestFramePermissions": []
 }
