@@ -1,25 +1,1149 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
+<head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sevens & Melds</title>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "vite": "https://aistudiocdn.com/vite@^7.2.6",
-    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.1"
-  }
-}
-</script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Import Map for Gemini SDK -->
+    <script type="importmap">
+    {
+      "imports": {
+        "@google/genai": "https://esm.run/@google/genai"
+      }
+    }
+    </script>
+
+    <style>
+        .pattern-grid {
+            background-color: #1e3a8a;
+            background-image: radial-gradient(#3b82f6 1px, transparent 1px);
+            background-size: 10px 10px;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+        .animate-bounce-short {
+             animation: bounceShort 1s infinite;
+        }
+        @keyframes bounceShort {
+            0%, 100% { transform: translate(-50%, -5%); }
+            50% { transform: translate(-50%, 5%); }
+        }
+    </style>
 </head>
-  <body>
+<body class="bg-green-800 text-white font-sans select-none">
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
-  </body>
+
+    <script type="text/babel" data-type="module">
+        import { GoogleGenAI } from "@google/genai";
+
+        // --- CONSTANTS & TYPES (Refactored to JS) ---
+        
+        const Suit = {
+            HEARTS: '♥',
+            DIAMONDS: '♦',
+            CLUBS: '♣',
+            SPADES: '♠',
+            JOKER: '★'
+        };
+
+        const Rank = {
+            ACE: 'A',
+            TWO: '2',
+            THREE: '3',
+            FOUR: '4',
+            FIVE: '5',
+            SIX: '6',
+            SEVEN: '7',
+            EIGHT: '8',
+            NINE: '9',
+            TEN: '10',
+            JACK: 'J',
+            QUEEN: 'Q',
+            KING: 'K',
+            JOKER: 'JOKER'
+        };
+
+        const CARD_WIDTH = "w-16 sm:w-20 md:w-24";
+        const CARD_HEIGHT = "h-24 sm:h-28 md:h-36";
+        const MAX_SCORE = 250;
+
+        const SUITS = [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES];
+        const RANKS = [
+            Rank.ACE, Rank.TWO, Rank.THREE, Rank.FOUR, Rank.FIVE, Rank.SIX,
+            Rank.SEVEN, Rank.EIGHT, Rank.NINE, Rank.TEN, Rank.JACK, Rank.QUEEN, Rank.KING
+        ];
+
+        const getSortValue = (rank) => {
+            if (rank === Rank.JOKER) return 99;
+            const index = RANKS.indexOf(rank);
+            return index + 1;
+        };
+
+        const getPoints = (rank) => {
+            if (rank === Rank.JOKER) return 30;
+            if (rank === Rank.SEVEN) return 15;
+            if ([Rank.JACK, Rank.QUEEN, Rank.KING].includes(rank)) return 10;
+            if (rank === Rank.ACE) return 1;
+            return parseInt(rank);
+        };
+
+        // --- GAME LOGIC ---
+
+        const createDeck = (playerCount) => {
+            const numDecks = playerCount >= 4 ? 2 : 1;
+            let deck = [];
+
+            for (let d = 0; d < numDecks; d++) {
+                SUITS.forEach(suit => {
+                    if (suit === Suit.JOKER) return;
+                    RANKS.forEach(rank => {
+                        deck.push({
+                            id: `${suit}-${rank}-${d}-${Math.random().toString(36).substr(2, 9)}`,
+                            suit,
+                            rank,
+                            value: getPoints(rank),
+                            sortValue: getSortValue(rank),
+                            isJoker: false
+                        });
+                    });
+                });
+
+                deck.push({ id: `JOKER-1-${d}-${Math.random()}`, suit: Suit.JOKER, rank: Rank.JOKER, value: 30, sortValue: 99, isJoker: true });
+                deck.push({ id: `JOKER-2-${d}-${Math.random()}`, suit: Suit.JOKER, rank: Rank.JOKER, value: 30, sortValue: 99, isJoker: true });
+            }
+
+            return shuffle(deck);
+        };
+
+        const shuffle = (array) => {
+            let currentIndex = array.length, randomIndex;
+            while (currentIndex !== 0) {
+                randomIndex = Math.floor(Math.random() * currentIndex);
+                currentIndex--;
+                [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+            }
+            return array;
+        };
+
+        const canPlayOnBoard = (card, sequences) => {
+            if (card.isJoker) return true;
+            if (card.rank === Rank.SEVEN) return !sequences[card.suit].hasSeven;
+
+            const seq = sequences[card.suit];
+            if (!seq.hasSeven) return false;
+
+            const val = card.sortValue;
+            return val === seq.high + 1 || val === seq.low - 1;
+        };
+
+        const calculateHandPoints = (hand) => {
+            return hand.reduce((sum, card) => sum + card.value, 0);
+        };
+
+        const applyFinalScores = (players, knockerIndex, jokerDeclarations) => {
+            const roundScores = players.map(p => {
+                let pts = calculateHandPoints(p.hand);
+                p.hand.forEach(card => {
+                    if (!card.isJoker) {
+                        const isDeclared = jokerDeclarations.some(decl => 
+                            decl.representedRank === card.rank && decl.representedSuit === card.suit
+                        );
+                        if (isDeclared) pts += 30;
+                    }
+                });
+                return pts;
+            });
+
+            const knockerScore = roundScores[knockerIndex];
+            let undercut = false;
+            
+            players.forEach((p, i) => {
+                if (i !== knockerIndex && roundScores[i] <= knockerScore) undercut = true;
+            });
+
+            const newPlayers = players.map(p => ({ ...p }));
+
+            if (undercut) {
+                const totalPoints = roundScores.reduce((a, b) => a + b, 0);
+                newPlayers[knockerIndex].score += totalPoints;
+            } else {
+                newPlayers.forEach((p, i) => {
+                    p.score += roundScores[i];
+                });
+            }
+
+            return newPlayers;
+        };
+
+        const setupTutorialGame = () => {
+            const mkCard = (suit, rank, isJoker = false) => ({
+                id: `tut-${suit}-${rank}-${Math.random()}`,
+                suit,
+                rank,
+                value: getPoints(rank),
+                sortValue: getSortValue(rank),
+                isJoker
+            });
+
+            const humanHand = [
+                mkCard(Suit.HEARTS, Rank.SEVEN),
+                mkCard(Suit.HEARTS, Rank.EIGHT),
+                mkCard(Suit.CLUBS, Rank.TWO),
+                mkCard(Suit.CLUBS, Rank.TWO),
+                mkCard(Suit.JOKER, Rank.JOKER, true),
+                mkCard(Suit.DIAMONDS, Rank.KING),
+                mkCard(Suit.SPADES, Rank.THREE),
+            ].sort((a, b) => a.sortValue - b.sortValue);
+
+            const botHand = [
+                mkCard(Suit.CLUBS, Rank.TWO), 
+                mkCard(Suit.SPADES, Rank.TEN),
+                mkCard(Suit.DIAMONDS, Rank.FIVE),
+                mkCard(Suit.HEARTS, Rank.ACE),
+                mkCard(Suit.CLUBS, Rank.NINE),
+                mkCard(Suit.SPADES, Rank.KING),
+                mkCard(Suit.DIAMONDS, Rank.FOUR),
+            ];
+
+            const deck = [
+                mkCard(Suit.HEARTS, Rank.ACE),
+                mkCard(Suit.SPADES, Rank.ACE),
+                ...createDeck(2)
+            ];
+
+            const players = [
+                { id: 0, name: "You (Student)", isHuman: true, hand: humanHand, score: 0, hasKnocked: false, melds: [] },
+                { id: 1, name: "Sensei Bot", isHuman: false, hand: botHand, score: 0, hasKnocked: false, melds: [] }
+            ];
+
+            const initialSequences = {
+                [Suit.HEARTS]: { suit: Suit.HEARTS, low: 7, high: 7, hasSeven: false },
+                [Suit.DIAMONDS]: { suit: Suit.DIAMONDS, low: 7, high: 7, hasSeven: false },
+                [Suit.CLUBS]: { suit: Suit.CLUBS, low: 7, high: 7, hasSeven: false },
+                [Suit.SPADES]: { suit: Suit.SPADES, low: 7, high: 7, hasSeven: false },
+                [Suit.JOKER]: { suit: Suit.JOKER, low: 0, high: 0, hasSeven: false }
+            };
+
+            return {
+                players,
+                currentPlayerIndex: 0,
+                deck,
+                discardPile: [],
+                boardSequences: initialSequences,
+                turnPhase: 'ACTION',
+                round: 1,
+                winner: null,
+                logs: ["Tutorial Started! Follow the instructions."],
+                pendingPong: null,
+                jokerDeclarations: [],
+                isTutorial: true,
+                tutorialStep: 0
+            };
+        };
+
+        const TUTORIAL_STEPS = [
+            {
+                title: "Rule 1: The Sevens",
+                text: "Welcome! In this game, 7s are special. They start the board sequences. You have a Heart 7. Click it to select, then click 'Play' to place it in the center.",
+                action: "PLAY_7"
+            },
+            {
+                title: "Rule 2: Sequences",
+                text: "Now that the Heart 7 is out, you can play a 6 or 8 of the same suit. Select your Heart 8 and play it.",
+                action: "PLAY_8"
+            },
+            {
+                title: "Rule 3: Drawing",
+                text: "Normally you would try to play more, but let's say you're stuck or saving cards. Click 'Draw Card' to take one from the deck.",
+                action: "DRAW"
+            },
+            {
+                title: "Rule 4: Discarding",
+                text: "Your turn ends by discarding. High value cards (Face cards=10, Jokers=30) are bad for your score. Discard that Diamond King!",
+                action: "DISCARD_K"
+            },
+            {
+                title: "Opponent Turn",
+                text: "The Bot is playing... wait for it.",
+                action: "WAIT"
+            },
+            {
+                title: "Rule 5: Pong!",
+                text: "The Bot discarded a Club 2. You have two Club 2s in hand! This is a 'Pong'. You can take the discard to form a set (Meld) of 3. Click 'PONG!'.",
+                action: "PONG"
+            },
+            {
+                title: "Rule 6: Jokers",
+                text: "Jokers are Wild but worth 30 points if left in hand! You must declare what card they represent. Play your Joker now - the game will ask you to assign it to the Heart sequence (e.g., as Heart 9).",
+                action: "PLAY_JOKER"
+            },
+            {
+                title: "Rule 7: Knocking",
+                text: "Your hand points are now very low (<= 5). This allows you to KNOCK. Knocking ends the round immediately. Click 'KNOCK' to win this tutorial!",
+                action: "KNOCK"
+            }
+        ];
+
+        // --- COMPONENTS ---
+
+        const Card = ({ card, onClick, isSelected, isPlayable, className, hidden }) => {
+            const isRed = card.suit === Suit.HEARTS || card.suit === Suit.DIAMONDS;
+            const baseClasses = `${CARD_WIDTH} ${CARD_HEIGHT} rounded-lg shadow-md border-2 relative flex flex-col justify-between p-1 transition-all duration-200 select-none`;
+            const colorClasses = isRed ? "text-red-600 border-gray-300" : "text-black border-gray-300";
+            const stateClasses = isSelected ? "-translate-y-4 ring-2 ring-yellow-400 z-10" : "hover:-translate-y-2";
+            const bgClass = hidden ? "bg-blue-700 pattern-grid" : "bg-white";
+
+            if (hidden) {
+                return (
+                    <div className={`${baseClasses} ${bgClass} ${className || ''}`}>
+                        <div className="w-full h-full rounded border border-blue-500 bg-blue-800 flex items-center justify-center">
+                            <span className="text-white opacity-20 text-2xl">♠</span>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div 
+                    onClick={onClick}
+                    className={`${baseClasses} ${colorClasses} ${stateClasses} ${bgClass} ${className || ''} ${isPlayable ? 'cursor-pointer' : 'cursor-default opacity-90'}`}
+                >
+                    <div className="text-sm font-bold leading-none">
+                        <div>{card.rank}</div>
+                        <div>{card.suit}</div>
+                    </div>
+                    <div className="absolute inset-0 flex items-center justify-center text-4xl opacity-20 pointer-events-none">{card.suit}</div>
+                    <div className="text-sm font-bold leading-none self-end rotate-180">
+                        <div>{card.rank}</div>
+                        <div>{card.suit}</div>
+                    </div>
+                </div>
+            );
+        };
+
+        const createVisualCard = (suit, val) => {
+            if (val < 1 || val > 13) return null;
+            const rank = RANKS[val - 1];
+            return {
+                id: `visual-${suit}-${rank}`,
+                suit,
+                rank,
+                value: 0,
+                sortValue: val,
+                isJoker: false
+            };
+        };
+
+        const Board = ({ sequences }) => {
+            return (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-green-900/40 p-4 rounded-xl border border-green-700 w-full max-w-5xl">
+                    {SUITS.filter(s => s !== Suit.JOKER).map(suit => {
+                        const seq = sequences[suit];
+                        const lowCard = seq.hasSeven ? createVisualCard(suit, seq.low) : null;
+                        const highCard = seq.hasSeven ? createVisualCard(suit, seq.high) : null;
+
+                        return (
+                            <div key={suit} className="flex flex-col items-center min-h-[200px] justify-center relative bg-white/5 rounded-lg p-2">
+                                {!seq.hasSeven && (
+                                    <div className="border-2 border-dashed border-white/30 w-16 h-24 rounded flex items-center justify-center">
+                                        <span className="text-3xl text-white/30">{suit}</span>
+                                        <span className="text-xs text-white/50 absolute bottom-2">Waiting for 7</span>
+                                    </div>
+                                )}
+                                {seq.hasSeven && (
+                                    <div className="flex flex-col items-center gap-2 w-full">
+                                        <div className="relative">
+                                            {highCard && highCard.rank !== Rank.SEVEN ? (
+                                                <>
+                                                    <span className="absolute -left-8 top-1/2 -translate-y-1/2 text-xs text-white/70 rotate-[-90deg]">MAX</span>
+                                                    <Card card={highCard} className="scale-90" />
+                                                </>
+                                            ) : <div className="h-8"></div>}
+                                        </div>
+                                        <div className="relative z-10 shadow-xl ring-2 ring-yellow-500/50 rounded-lg">
+                                            <Card card={createVisualCard(suit, 7)} />
+                                        </div>
+                                        <div className="relative">
+                                            {lowCard && lowCard.rank !== Rank.SEVEN ? (
+                                                <>
+                                                    <span className="absolute -left-8 top-1/2 -translate-y-1/2 text-xs text-white/70 rotate-[-90deg]">MIN</span>
+                                                    <Card card={lowCard} className="scale-90" />
+                                                </>
+                                            ) : <div className="h-8"></div>}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            );
+        };
+
+        const Modal = ({ children, onClose, title }) => (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 animate-fade-in">
+                <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full m-4 relative flex flex-col max-h-[90vh]">
+                    {onClose && <button onClick={onClose} className="absolute top-2 right-2 text-gray-500 hover:text-black">✕</button>}
+                    {title && <h2 className="text-xl font-bold mb-4 text-center border-b pb-2 text-gray-800">{title}</h2>}
+                    <div className="flex-1 overflow-y-auto text-gray-800">
+                        {children}
+                    </div>
+                </div>
+            </div>
+        );
+
+        // --- APP COMPONENT ---
+
+        const App = () => {
+            const [gameState, setGameState] = React.useState(null);
+            const [selectedCards, setSelectedCards] = React.useState([]);
+            const [showPongModal, setShowPongModal] = React.useState(false);
+            const [pongTimer, setPongTimer] = React.useState(10);
+            
+            const [showSingleJokerModal, setShowSingleJokerModal] = React.useState(false);
+            const [pendingSingleJokerMove, setPendingSingleJokerMove] = React.useState(null);
+            const [pendingMeldAction, setPendingMeldAction] = React.useState(null);
+            const [roundSummary, setRoundSummary] = React.useState(null);
+
+            const [aiHint, setAiHint] = React.useState(null);
+            const [isLoadingHint, setIsLoadingHint] = React.useState(false);
+            const [gameStarted, setGameStarted] = React.useState(false);
+            const [playerCount, setPlayerCount] = React.useState(4);
+            const [apiKey, setApiKey] = React.useState('');
+            const [showKeyInput, setShowKeyInput] = React.useState(false);
+
+            // --- API Logic ---
+            const getAIHint = async (state) => {
+                if (!apiKey) return "Please set your Gemini API Key in the main menu to use hints.";
+                const client = new GoogleGenAI({ apiKey });
+                
+                const player = state.players[0];
+                const handStr = player.hand.map(c => `${c.rank}${c.suit}`).join(', ');
+                const boardStr = Object.entries(state.boardSequences)
+                    .filter(([_, seq]) => seq.hasSeven)
+                    .map(([suit, seq]) => `${suit}: ${seq.low}-${seq.high}`)
+                    .join(' | ');
+
+                const prompt = `
+                    You are an expert card game strategist for 'Sevens & Melds'.
+                    Goal: Lowest score. Knock when hand <= 5.
+                    Hand: ${handStr}.
+                    Board: ${boardStr || "Empty"}.
+                    My Score: ${player.hand.reduce((acc, c) => acc + c.value, 0)}.
+                    Suggest the best move concisely.
+                `;
+
+                try {
+                    const response = await client.models.generateContent({
+                        model: 'gemini-2.5-flash',
+                        contents: prompt,
+                    });
+                    return response.text || "No hint generated.";
+                } catch (e) {
+                    console.error(e);
+                    return "Error connecting to AI. Check API Key.";
+                }
+            };
+
+            // --- Game Actions ---
+            const startGame = () => {
+                const deck = createDeck(playerCount);
+                const players = Array.from({ length: playerCount }).map((_, i) => ({
+                    id: i,
+                    name: i === 0 ? "You" : `Bot ${i}`,
+                    isHuman: i === 0,
+                    hand: [],
+                    score: 0,
+                    hasKnocked: false,
+                    melds: []
+                }));
+
+                players.forEach(p => {
+                    p.hand = deck.splice(0, 7).sort((a, b) => a.sortValue - b.sortValue);
+                });
+
+                const initialSequences = {
+                    [Suit.HEARTS]: { suit: Suit.HEARTS, low: 7, high: 7, hasSeven: false },
+                    [Suit.DIAMONDS]: { suit: Suit.DIAMONDS, low: 7, high: 7, hasSeven: false },
+                    [Suit.CLUBS]: { suit: Suit.CLUBS, low: 7, high: 7, hasSeven: false },
+                    [Suit.SPADES]: { suit: Suit.SPADES, low: 7, high: 7, hasSeven: false },
+                    [Suit.JOKER]: { suit: Suit.JOKER, low: 0, high: 0, hasSeven: false }
+                };
+
+                setGameState({
+                    players,
+                    currentPlayerIndex: 0,
+                    deck,
+                    discardPile: [],
+                    boardSequences: initialSequences,
+                    turnPhase: 'ACTION',
+                    round: 1,
+                    winner: null,
+                    logs: ["Game started!"],
+                    pendingPong: null,
+                    jokerDeclarations: []
+                });
+                setGameStarted(true);
+                setAiHint(null);
+                setRoundSummary(null);
+            };
+
+            const startTutorial = () => {
+                setGameState(setupTutorialGame());
+                setGameStarted(true);
+                setAiHint(null);
+                setRoundSummary(null);
+            };
+
+            const addLog = (msg) => {
+                setGameState(prev => prev ? ({ ...prev, logs: [...prev.logs.slice(-4), msg] }) : null);
+            };
+
+            const handleCardClick = (card) => {
+                if (!gameState || (gameState.turnPhase !== 'ACTION' && gameState.turnPhase !== 'DISCARD')) return;
+                if (gameState.currentPlayerIndex !== 0) return;
+
+                if (selectedCards.includes(card.id)) {
+                    setSelectedCards(prev => prev.filter(id => id !== card.id));
+                } else {
+                    if (gameState.turnPhase === 'DISCARD') {
+                        setSelectedCards([card.id]);
+                    } else {
+                        setSelectedCards(prev => [...prev, card.id]);
+                    }
+                }
+            };
+
+            const playSelectedCards = () => {
+                if (!gameState || selectedCards.length === 0) return;
+
+                // Tutorial Interception
+                if (gameState.isTutorial) {
+                    const step = TUTORIAL_STEPS[gameState.tutorialStep || 0];
+                    const card = gameState.players[0].hand.find(c => c.id === selectedCards[0]);
+                    if (!card) return;
+
+                    if (step.action === "PLAY_7" && (card.rank !== Rank.SEVEN || card.suit !== Suit.HEARTS)) { addLog("Tutorial: Play Heart 7."); return; }
+                    if (step.action === "PLAY_8" && (card.rank !== Rank.EIGHT || card.suit !== Suit.HEARTS)) { addLog("Tutorial: Play Heart 8."); return; }
+                    if (step.action === "PLAY_JOKER" && !card.isJoker) { addLog("Tutorial: Play Joker."); return; }
+                }
+
+                const player = gameState.players[0];
+                const cardsToPlay = player.hand.filter(c => selectedCards.includes(c.id));
+
+                if (cardsToPlay.length === 1) {
+                    const card = cardsToPlay[0];
+                    if (card.isJoker) {
+                        const playableSuits = SUITS.filter(s => s !== Suit.JOKER && gameState.boardSequences[s].hasSeven);
+                        if (playableSuits.length === 0) {
+                            addLog("Joker cannot be 7.");
+                            return;
+                        }
+                        setPendingSingleJokerMove({ card, context: 'SEQUENCE' }); 
+                        setShowSingleJokerModal(true);
+                        return;
+                    }
+
+                    let valid = false;
+                    let newSequences = { ...gameState.boardSequences };
+
+                    if (card.rank === Rank.SEVEN && !newSequences[card.suit].hasSeven) {
+                        newSequences[card.suit].hasSeven = true;
+                        valid = true;
+                    } else if (canPlayOnBoard(card, newSequences)) {
+                        const seq = newSequences[card.suit];
+                        if (card.sortValue === seq.high + 1) seq.high = card.sortValue;
+                        if (card.sortValue === seq.low - 1) seq.low = card.sortValue;
+                        valid = true;
+                    }
+
+                    if (valid) {
+                        const newHand = player.hand.filter(c => c.id !== card.id);
+                        const nextStep = gameState.isTutorial ? (gameState.tutorialStep || 0) + 1 : gameState.tutorialStep;
+                        setGameState({
+                            ...gameState,
+                            players: gameState.players.map((p, i) => i === 0 ? { ...p, hand: newHand } : p),
+                            boardSequences: newSequences,
+                            logs: [...gameState.logs, `You played ${card.rank} ${card.suit}`],
+                            tutorialStep: nextStep
+                        });
+                        setSelectedCards([]);
+                    } else {
+                        addLog("Invalid move!");
+                    }
+                } else if (cardsToPlay.length === 3) {
+                     if (gameState.isTutorial) { addLog("Tutorial: Singles only now."); return; }
+                     const jokers = cardsToPlay.filter(c => c.isJoker);
+                     const nonJokers = cardsToPlay.filter(c => !c.isJoker);
+                     
+                     if (nonJokers.length > 0) {
+                         const targetRank = nonJokers[0].rank;
+                         if (!nonJokers.every(c => c.rank === targetRank)) { addLog("Ranks match failed."); return; }
+                         if (targetRank === Rank.SEVEN && jokers.length > 0) { addLog("No Joker on 7s."); return; }
+                         
+                         if (jokers.length > 0) {
+                             setPendingMeldAction({ type: 'MELD', cards: cardsToPlay, naturalRank: targetRank, jokersCount: jokers.length });
+                             return;
+                         }
+                         // Clean meld
+                         const newHand = player.hand.filter(c => !selectedCards.includes(c.id));
+                         setGameState({
+                             ...gameState,
+                             players: gameState.players.map((p, i) => i === 0 ? { ...p, hand: newHand, melds: [...p.melds, cardsToPlay] } : p),
+                             logs: [...gameState.logs, `Melded three ${targetRank}s`]
+                         });
+                         setSelectedCards([]);
+                     } else {
+                         // 3 Jokers
+                         setPendingMeldAction({ type: 'MELD', cards: cardsToPlay, naturalRank: null, jokersCount: 3 });
+                     }
+                }
+            };
+
+            const confirmSingleJokerMove = (declaredSuit, declaredRank) => {
+                if (!gameState || !pendingSingleJokerMove) return;
+                const { card } = pendingSingleJokerMove;
+                if (declaredRank === Rank.SEVEN) return;
+
+                let newSequences = { ...gameState.boardSequences };
+                const seq = newSequences[declaredSuit];
+                const val = getSortValue(declaredRank);
+                if (val === seq.high + 1) seq.high = val;
+                if (val === seq.low - 1) seq.low = val;
+
+                const newHand = gameState.players[0].hand.filter(c => c.id !== card.id);
+                const nextStep = gameState.isTutorial ? (gameState.tutorialStep || 0) + 1 : gameState.tutorialStep;
+                
+                setGameState({
+                    ...gameState,
+                    players: gameState.players.map((p, i) => i === 0 ? { ...p, hand: newHand } : p),
+                    boardSequences: newSequences,
+                    jokerDeclarations: [...gameState.jokerDeclarations, { cardId: card.id, representedSuit: declaredSuit, representedRank: declaredRank }],
+                    logs: [...gameState.logs, `Joker played as ${declaredRank} ${declaredSuit}`],
+                    tutorialStep: nextStep
+                });
+                setShowSingleJokerModal(false);
+                setPendingSingleJokerMove(null);
+                setSelectedCards([]);
+            };
+
+            const confirmMeldWithJokers = (declarations) => {
+                 if (!gameState || !pendingMeldAction) return;
+                 const { type, cards } = pendingMeldAction;
+                 const player = gameState.players[0];
+                 const jokersInMeld = cards.filter(c => c.isJoker);
+                 const newJokerDeclarations = jokersInMeld.map((joker, idx) => ({
+                     cardId: joker.id,
+                     representedSuit: declarations[idx].suit,
+                     representedRank: declarations[idx].rank
+                 }));
+
+                 let newHand = [], newDiscard = [...gameState.discardPile], nextPhase = gameState.turnPhase, pendingPong = gameState.pendingPong;
+
+                 if (type === 'MELD') {
+                     newHand = player.hand.filter(c => !cards.some(played => played.id === c.id));
+                 } else { // PONG
+                     newHand = player.hand.filter(c => !cards.some(played => played.id === c.id));
+                     newDiscard = newDiscard.slice(1);
+                     nextPhase = 'ACTION';
+                     pendingPong = null;
+                 }
+
+                 setGameState({
+                     ...gameState,
+                     players: gameState.players.map((p, i) => i === 0 ? { ...p, hand: newHand, melds: [...p.melds, cards] } : p),
+                     discardPile: newDiscard,
+                     turnPhase: nextPhase,
+                     currentPlayerIndex: 0,
+                     pendingPong: pendingPong,
+                     jokerDeclarations: [...gameState.jokerDeclarations, ...newJokerDeclarations]
+                 });
+                 setPendingMeldAction(null);
+                 setSelectedCards([]);
+                 setShowPongModal(false);
+            };
+
+            const drawCard = () => {
+                if (!gameState || gameState.turnPhase !== 'ACTION') return;
+                if (gameState.isTutorial && TUTORIAL_STEPS[gameState.tutorialStep].action !== "DRAW") { addLog("Tutorial: Don't draw yet."); return; }
+                
+                const deck = [...gameState.deck];
+                if (deck.length === 0) {
+                    setGameState({...gameState, turnPhase: 'DISCARD'});
+                    return;
+                }
+                const card = deck.shift();
+                const player = { ...gameState.players[0] };
+                player.hand = [...player.hand, card].sort((a,b) => a.sortValue - b.sortValue);
+                const nextStep = gameState.isTutorial ? (gameState.tutorialStep || 0) + 1 : gameState.tutorialStep;
+
+                setGameState({
+                    ...gameState,
+                    deck,
+                    players: gameState.players.map((p, i) => i === 0 ? player : p),
+                    turnPhase: 'DISCARD',
+                    logs: [...gameState.logs, "You drew a card."],
+                    tutorialStep: nextStep
+                });
+            };
+
+            const discardCard = () => {
+                if (!gameState || selectedCards.length !== 1 || gameState.turnPhase !== 'DISCARD') return;
+                const card = gameState.players[0].hand.find(c => c.id === selectedCards[0]);
+                if (gameState.isTutorial && TUTORIAL_STEPS[gameState.tutorialStep].action === "DISCARD_K" && card.rank !== Rank.KING) { addLog("Tutorial: Discard King."); return; }
+
+                const newHand = gameState.players[0].hand.filter(c => c.id !== card.id);
+                const nextStep = gameState.isTutorial ? (gameState.tutorialStep || 0) + 1 : gameState.tutorialStep;
+
+                setGameState({
+                    ...gameState,
+                    players: gameState.players.map((p, i) => i === 0 ? { ...p, hand: newHand } : p),
+                    discardPile: [card, ...gameState.discardPile],
+                    currentPlayerIndex: (gameState.currentPlayerIndex + 1) % gameState.players.length,
+                    turnPhase: 'ACTION',
+                    logs: [...gameState.logs, `You discarded ${card.rank}`],
+                    pendingPong: { card, discarderIndex: 0 },
+                    tutorialStep: nextStep
+                });
+                setSelectedCards([]);
+            };
+
+            const handleKnock = () => {
+                if (!gameState) return;
+                const points = calculateHandPoints(gameState.players[0].hand);
+                if (gameState.isTutorial && TUTORIAL_STEPS[gameState.tutorialStep].action !== "KNOCK") { addLog("Tutorial: Wait."); return; }
+                if (!gameState.isTutorial && points > 5) { addLog(`Points ${points} > 5. Cannot knock.`); return; }
+                processRoundEnd(gameState.players, 0);
+            };
+
+            const processRoundEnd = React.useCallback((currentPlayers, knockerIdx) => {
+                if (!gameState) return;
+                const prevScores = currentPlayers.map(p => p.score);
+                const updated = applyFinalScores(currentPlayers, knockerIdx, gameState.jokerDeclarations);
+                const roundPts = updated.map((p, i) => p.score - prevScores[i]);
+                
+                setGameState(prev => ({
+                    ...prev,
+                    players: updated,
+                    turnPhase: 'ROUND_OVER',
+                    logs: [...prev.logs, `${currentPlayers[knockerIdx].name} knocked!`]
+                }));
+                setRoundSummary({ roundPoints: roundPts, previousScores: prevScores, updatedPlayers: updated, knockerIndex: knockerIdx });
+            }, [gameState]);
+
+            const startNextRound = () => {
+                if (!gameState || !roundSummary) return;
+                if (gameState.isTutorial) { setGameState(null); setGameStarted(false); return; }
+                
+                const { updatedPlayers } = roundSummary;
+                if (updatedPlayers.some(p => p.score >= MAX_SCORE)) {
+                    const winner = updatedPlayers.reduce((p, c) => p.score < c.score ? p : c);
+                    setGameState({ ...gameState, winner, turnPhase: 'GAME_OVER' });
+                    setRoundSummary(null);
+                } else {
+                    const deck = createDeck(updatedPlayers.length);
+                    updatedPlayers.forEach(p => { p.hand = deck.splice(0, 7).sort((a,b)=>a.sortValue - b.sortValue); p.melds = []; });
+                    const initialSequences = {
+                        [Suit.HEARTS]: { suit: Suit.HEARTS, low: 7, high: 7, hasSeven: false },
+                        [Suit.DIAMONDS]: { suit: Suit.DIAMONDS, low: 7, high: 7, hasSeven: false },
+                        [Suit.CLUBS]: { suit: Suit.CLUBS, low: 7, high: 7, hasSeven: false },
+                        [Suit.SPADES]: { suit: Suit.SPADES, low: 7, high: 7, hasSeven: false },
+                        [Suit.JOKER]: { suit: Suit.JOKER, low: 0, high: 0, hasSeven: false }
+                    };
+                    setGameState({
+                        players: updatedPlayers,
+                        currentPlayerIndex: (gameState.round) % updatedPlayers.length,
+                        deck, discardPile: [], boardSequences: initialSequences,
+                        turnPhase: 'ACTION', round: gameState.round + 1, winner: null,
+                        logs: [`Round ${gameState.round + 1}`], pendingPong: null, jokerDeclarations: []
+                    });
+                    setRoundSummary(null);
+                }
+            };
+
+            const doPong = () => {
+                if (!gameState || !gameState.pendingPong) return;
+                const human = gameState.players[0];
+                const discard = gameState.pendingPong.card;
+                const naturalMatches = human.hand.filter(c => c.rank === discard.rank && !c.isJoker);
+                const jokers = human.hand.filter(c => c.isJoker);
+                
+                let cardsToUse = naturalMatches.length >= 2 ? naturalMatches.slice(0, 2) : [naturalMatches[0], jokers[0]];
+                if (naturalMatches.length === 0) cardsToUse = jokers.slice(0, 2);
+
+                if (cardsToUse.some(c => c.isJoker)) {
+                    setPendingMeldAction({ type: 'PONG', cards: [...cardsToUse, discard], naturalRank: discard.rank, jokersCount: cardsToUse.filter(c=>c.isJoker).length });
+                    setShowPongModal(false);
+                    return;
+                }
+                
+                const newHand = human.hand.filter(c => !cardsToUse.includes(c));
+                const nextStep = gameState.isTutorial ? (gameState.tutorialStep || 0) + 1 : gameState.tutorialStep;
+                setGameState({
+                    ...gameState,
+                    players: gameState.players.map((p, i) => i === 0 ? { ...p, hand: newHand, melds: [...p.melds, [...cardsToUse, discard]] } : p),
+                    discardPile: gameState.discardPile.slice(1),
+                    currentPlayerIndex: 0, turnPhase: 'ACTION', pendingPong: null,
+                    logs: [...gameState.logs, "You Ponged!"], tutorialStep: nextStep
+                });
+                setShowPongModal(false);
+            };
+
+            React.useEffect(() => {
+                if (showPongModal && pongTimer > 0) {
+                    const t = setTimeout(() => setPongTimer(v => v-1), 1000);
+                    return () => clearTimeout(t);
+                }
+                if (showPongModal && pongTimer === 0) setShowPongModal(false);
+            }, [showPongModal, pongTimer]);
+
+            React.useEffect(() => {
+                if (showPongModal) setPongTimer(10);
+            }, [showPongModal]);
+
+            // --- Pong Watcher ---
+            React.useEffect(() => {
+                if (!gameState?.pendingPong) return;
+                if (gameState.isTutorial && gameState.pendingPong.discarderIndex !== 0) { setShowPongModal(true); return; }
+                
+                if (gameState.pendingPong.discarderIndex !== 0) {
+                    const h = gameState.players[0];
+                    const r = gameState.pendingPong.card.rank;
+                    const match = h.hand.filter(c => c.rank === r && !c.isJoker).length + h.hand.filter(c => c.isJoker).length;
+                    if (match >= 2) setShowPongModal(true);
+                    else setGameState(prev => ({...prev, pendingPong: null}));
+                } else {
+                    setGameState(prev => ({...prev, pendingPong: null}));
+                }
+            }, [gameState?.pendingPong]);
+
+            // --- BOT AI ---
+            React.useEffect(() => {
+                if (!gameState || gameState.turnPhase !== 'ACTION' || gameState.currentPlayerIndex === 0 || gameState.pendingPong || !gameStarted) return;
+                
+                const runBot = async () => {
+                    await new Promise(r => setTimeout(r, 1000));
+                    if (gameState.isTutorial) {
+                         const bot = gameState.players[1];
+                         let deck = [...gameState.deck];
+                         let newHand = [...bot.hand];
+                         if (deck.length > 0) newHand.push(deck.shift());
+                         
+                         const discard = newHand.find(c => c.rank === Rank.TWO && c.suit === Suit.CLUBS) || newHand[0];
+                         newHand = newHand.filter(c => c.id !== discard.id);
+                         setGameState(prev => ({
+                             ...prev, deck, players: prev.players.map((p,i) => i === 1 ? {...p, hand: newHand} : p),
+                             discardPile: [discard, ...prev.discardPile],
+                             pendingPong: { card: discard, discarderIndex: 1 },
+                             logs: [...prev.logs, "Bot discarded Club 2"],
+                             tutorialStep: (prev.tutorialStep || 0) + 1
+                         }));
+                         return;
+                    }
+
+                    // Standard AI Logic (Simplified for single file)
+                    const botIdx = gameState.currentPlayerIndex;
+                    const bot = gameState.players[botIdx];
+                    let newHand = [...bot.hand], newMelds = [...bot.melds], newSeqs = {...gameState.boardSequences}, newDecls = [...gameState.jokerDeclarations];
+                    let played = true;
+
+                    while(played) {
+                        played = false;
+                        // Melds
+                        const counts = {};
+                        newHand.filter(c=>!c.isJoker).forEach(c => { counts[c.rank] = (counts[c.rank] || []).concat(c); });
+                        for(const r in counts) {
+                            if(counts[r].length >= 3) {
+                                const m = counts[r].slice(0,3);
+                                newMelds.push(m);
+                                newHand = newHand.filter(c => !m.includes(c));
+                                played = true; break;
+                            }
+                        }
+                        if(played) continue;
+
+                        // Play
+                        for(let i=0; i<newHand.length; i++) {
+                            const c = newHand[i];
+                            if(!c.isJoker) {
+                                if(c.rank === Rank.SEVEN && !newSeqs[c.suit].hasSeven) {
+                                    newSeqs[c.suit].hasSeven = true; newHand.splice(i,1); played = true; break;
+                                }
+                                if(canPlayOnBoard(c, newSeqs)) {
+                                    const s = newSeqs[c.suit];
+                                    if(c.sortValue === s.high+1) s.high = c.sortValue;
+                                    if(c.sortValue === s.low-1) s.low = c.sortValue;
+                                    newHand.splice(i,1); played = true; break;
+                                }
+                            } else {
+                                // Joker AI
+                                const validSuits = SUITS.filter(s => s !== Suit.JOKER && newSeqs[s].hasSeven);
+                                for (const s of validSuits) {
+                                    const seq = newSeqs[s];
+                                    let tR = null;
+                                    if (seq.high < 13) tR = RANKS[seq.high];
+                                    else if (seq.low > 1) tR = RANKS[seq.low-2];
+                                    
+                                    if(tR && tR !== Rank.SEVEN) {
+                                        if(getSortValue(tR) > seq.high) seq.high = getSortValue(tR); else seq.low = getSortValue(tR);
+                                        newDecls.push({ cardId: c.id, representedSuit: s, representedRank: tR });
+                                        newHand.splice(i,1); played = true; break;
+                                    }
+                                }
+                                if(played) break;
+                            }
+                        }
+                    }
+
+                    if(calculateHandPoints(newHand) <= 5) {
+                         processRoundEnd(gameState.players.map((p,i)=>i===botIdx ? {...p, hand: newHand, melds: newMelds} : p), botIdx);
+                         return;
+                    }
+
+                    let deck = [...gameState.deck];
+                    if(deck.length > 0) newHand.push(deck.shift());
+                    newHand.sort((a,b)=>a.sortValue - b.sortValue);
+                    
+                    const discIdx = newHand.reduce((iMax, x, i, arr) => x.value > arr[iMax].value ? i : iMax, 0);
+                    const discCard = newHand[discIdx];
+                    newHand.splice(discIdx, 1);
+
+                    setGameState(prev => ({
+                        ...prev,
+                        players: prev.players.map((p,i)=>i===botIdx ? {...p, hand: newHand, melds: newMelds} : p),
+                        boardSequences: newSeqs, jokerDeclarations: newDecls, deck,
+                        discardPile: [discCard, ...prev.discardPile],
+                        currentPlayerIndex: (botIdx + 1) % prev.players.length,
+                        pendingPong: { card: discCard, discarderIndex: botIdx },
+                        logs: [...prev.logs, `${bot.name} discarded ${discCard.rank}`]
+                    }));
+                };
+                runBot();
+            }, [gameState?.currentPlayerIndex, gameState?.turnPhase, gameState?.pendingPong]);
+
+            if (!gameStarted) {
+                return (
+                    <div className="min-h-screen flex flex-col items-center justify-center p-4 text-center">
+                        <h1 className="text-6xl font-bold mb-8 text-yellow-400 drop-shadow-lg">Sevens & Melds</h1>
+                        <div className="bg-green-900 p-8 rounded-xl shadow-2xl border border-green-700 w-full max-w-md">
+                            <label className="block mb-2 font-bold text-green-300">Players</label>
+                            <div className="flex justify-center gap-2 mb-6">
+                                {[2,3,4,5,6].map(n => (
+                                    <button key={n} onClick={() => setPlayerCount(n)} className={`w-12 h-12 rounded-full font-bold text-xl transition-all ${playerCount===n ? 'bg-yellow-400 text-black scale-110' : 'bg-green-700 text-white hover:bg-green-600'}`}>{n}</button>
+                                ))}
+                            </div>
+                            
+                            <button onClick={() => setShowKeyInput(!showKeyInput)} className="text-xs text-green-400 underline mb-2">
+                                {showKeyInput ? 'Hide API Key' : 'Configure API Key (For Hints)'}
+                            </button>
+                            {showKeyInput && (
+                                <input 
+                                    type="text" 
+                                    placeholder="Enter Google Gemini API Key" 
+                                    value={apiKey} 
+                                    onChange={(e) => setApiKey(e.target.value)} 
+                                    className="w-full mb-4 p-2 rounded text-black text-sm"
+                                />
+                            )}
+
+                            <button onClick={startGame} className="w-full py-4 bg-yellow-500 hover:bg-yellow-400 text-black font-bold rounded-lg text-2xl shadow-lg mb-4 transform hover:scale-105 transition-all">Start Game</button>
+                            <button onClick={startTutorial} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-xl shadow-lg">Tutorial</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            const human = gameState.players[0];
+
+            return (
+                <div className="min-h-screen flex flex-col overflow-hidden relative">
+                    {/* Header */}
+                    <div className="bg-green-900/80 p-2 flex justify-between items-start z-20">
+                        <div className="flex gap-2 overflow-x-auto pb-1">
+                            {gameState.players.slice(1).map(p => (
+                                <div key={p.id} className={`flex flex-col items-center p-2 rounded min-w-[80px] ${gameState.currentPlayerIndex === p.id ? 'bg-yellow-500/20 border-yellow-500' : 'bg-black/20'}`}>
+                                    <div className="w-8 h-8 rounded-full bg-gray-200 text-black font-bold flex items-center justify-center mb-1">{p.name[0]}</div>
+                                    <span className="text-xs">{p.name}</span>
+                                    <span className="text-xs text-yellow-300">{p.score} pts</span>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="text-right text-xs opacity-70">Round {gameState.round}<br/>Deck: {gameState.deck.length}</div>
+                    </div>
+
+                    {/* Tutorial */}
+                    {gameState.isTutorial && TUTORIAL_STEPS[gameState.tutorialStep] && (
+                        <div className="absolute top-20 left-1/2 -translate-x-1/2 bg-blue-600/95 text-white p-4 rounded-xl shadow-2xl z-50 max-w-sm border-2 border-yellow-400 animate-bounce-short text-center">
+                            <h3 className="font-bold text-yellow-300 mb-1">{TUTORIAL_STEPS[gameState.tutorialStep].title}</h3>
+                            <p className="text-sm">{TUTORIAL_STEPS[gameState.tutorialStep].text}</p>
+                        </div>
+                    )}
+
+                    {/* Board Area */}
+                    <div className="flex-1 flex flex-col items-center justify-center p-2 relative">
+                        <Board sequences={gameState.boardSequences} />
+                        
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col items-center">
+                            <span className="text-xs opacity-50 mb-1">DISCARD</span>
+                            {gameState.discardPile.length > 0 ? <Card card={gameState.discardPile[0]} /> : <div className="w-16 h-24 border-2 border-dashed border-white/20 rounded flex items-center justify-center text-xs text-white/20">Empty</div>}
+                        </div>
+
+                        <div className="absolute left-4 bottom-32 max-w-[200px] pointer-events-none">
+                            {gameState.logs.slice(-3).map((l,i) => <div key={i} className="bg-black/40 p-1 rounded mb-1 text-xs animate-fade-in">{l}</div>)}
+                        </div>
+                    </div>
+
+                    {/* Controls */}
+                    <div className="bg-green-900 pt-2 pb-6 px-4 z-30 shadow-[0_-5px_20px_rgba(0,0,0,0.5)]">
+                        <div className="flex justify-between items-end mb-4 max-w-5xl mx-auto">
+                            <div>
+                                <div className="text-xs opacity-70">MY SCORE</div>
+                                <div className="text-2xl font-bold text-yellow-400">{human.score}</div>
+                            </div>
+                            <div className="flex gap-2">
+                                {gameState.turnPhase === 'ACTION' && gameState.currentPlayerIndex === 0 && (
+                                    <>
+                                        <button onClick={playSelectedCards} disabled={!selectedCards.length} className="bg-blue-600 disabled:opacity-50 text-white px-4 py-2 rounded font-bold shadow-lg active:scale-95">Play</button>
+                                        {(calculateHandPoints(human.hand) <= 5 || gameState.isTutorial) && <button onClick={handleKnock} className="bg-red-600 text-white px-4 py-2 rounded font-bold shadow-lg animate-pulse">KNOCK</button>}
+                                        <button onClick={drawCard} className="bg-green-600 text-white px-4 py-2 rounded font-bold shadow-lg active:scale-95">Draw</button>
+                                    </>
+                                )}
+                                {gameState.turnPhase === 'DISCARD' && gameState.currentPlayerIndex === 0 && (
+                                    <button onClick={discardCard} disabled={selectedCards.length!==1} className="bg-orange-600 disabled:opacity-50 text-white px-6 py-2 rounded font-bold shadow-lg">Discard</button>
+                                )}
+                                {!gameState.isTutorial && <button onClick={() => getAIHint(gameState).then(setAiHint)} disabled={isLoadingHint} className="bg-purple-700 text-white px-3 py-2 rounded shadow-lg">✨ AI</button>}
+                            </div>
+                        </div>
+
+                        {aiHint && (
+                            <div className="max-w-md mx-auto mb-2 bg-purple-900/90 p-3 rounded border border-purple-400 relative">
+                                <button onClick={()=>setAiHint(null)} className="absolute top-1 right-2 text-xs">✕</button>
+                                <p className="text-sm pr-4">{aiHint}</p>
+                            </div>
+                        )}
+
+                        <div className="flex -space-x-4 justify-center overflow-x-auto pb-4 min-h-[120px]">
+                            {human.hand.map((c) => (
+                                <Card key={c.id} card={c} onClick={() => handleCardClick(c)} isSelected={selectedCards.includes(c.id)} isPlayable={gameState.currentPlayerIndex === 0} className="hover:z-50 hover:-translate-y-6 transition-transform" />
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Modals */}
+                    {showPongModal && !pendingMeldAction && (
+                        <Modal title="PONG Opportunity!">
+                            <div className="w-full bg-gray-200 rounded-full h-2 mb-4"><div className="bg-blue-600 h-2 rounded-full transition-all duration-1000 ease-linear" style={{width: `${pongTimer*10}%`}}></div></div>
+                            <div className="flex justify-center mb-4"><Card card={gameState.pendingPong.card} /></div>
+                            <div className="flex gap-4 justify-center">
+                                <button onClick={doPong} className="bg-blue-600 text-white px-8 py-3 rounded font-bold shadow-lg">PONG!</button>
+                                <button onClick={()=>setShowPongModal(false)} className="bg-gray-300 text-black px-6 py-3 rounded font-bold">Pass</button>
+                            </div>
+                        </Modal>
+                    )}
+
+                    {showSingleJokerModal && (
+                        <Modal title="Declare Joker" onClose={()=>setShowSingleJokerModal(false)}>
+                            <div className="grid grid-cols-1 gap-2">
+                                {SUITS.filter(s => s !== Suit.JOKER && gameState.boardSequences[s].hasSeven).map(s => {
+                                    const seq = gameState.boardSequences[s];
+                                    const opts = [];
+                                    if(seq.low > 1) opts.push({r: RANKS[seq.low-2], type:'Low'});
+                                    if(seq.high < 13) opts.push({r: RANKS[seq.high], type:'High'});
+                                    return opts.filter(o=>o.r !== Rank.SEVEN).map(o => (
+                                        <button key={`${s}-${o.r}`} onClick={()=>confirmSingleJokerMove(s, o.r)} className="p-3 border rounded hover:bg-gray-100 flex justify-between font-bold">
+                                            <span>{o.type} of {s}</span>
+                                            <span className={s===Suit.HEARTS||s===Suit.DIAMONDS?'text-red-600':''}>{o.r} {s}</span>
+                                        </button>
+                                    ));
+                                })}
+                            </div>
+                        </Modal>
+                    )}
+
+                    {pendingMeldAction && (
+                        <Modal title="Assign Jokers" onClose={()=>setPendingMeldAction(null)}>
+                            {(() => {
+                                const { jokersCount, naturalRank, cards } = pendingMeldAction;
+                                const usedSuits = cards.filter(c=>!c.isJoker).map(c=>c.suit);
+                                const [selRank, setSelRank] = React.useState(naturalRank || Rank.ACE);
+                                const [decls, setDecls] = React.useState(Array(jokersCount).fill({suit: null}));
+
+                                React.useEffect(() => {
+                                    setDecls(d => d.map(x => ({...x, rank: naturalRank || selRank})));
+                                }, [selRank]);
+
+                                const toggleSuit = (idx, s) => {
+                                    const newD = [...decls]; newD[idx] = {...newD[idx], suit: s}; setDecls(newD);
+                                };
+
+                                return (
+                                    <div className="flex flex-col gap-4">
+                                        {!naturalRank && (
+                                            <select value={selRank} onChange={e=>setSelRank(e.target.value)} className="border p-2 rounded w-full">
+                                                {RANKS.filter(r=>r!==Rank.SEVEN && r!==Rank.JOKER).map(r=><option key={r} value={r}>{r}</option>)}
+                                            </select>
+                                        )}
+                                        {decls.map((d, i) => (
+                                            <div key={i} className="border p-2 rounded">
+                                                <p className="text-sm font-bold mb-2">Joker {i+1} Suit:</p>
+                                                <div className="flex gap-2 justify-center">
+                                                    {SUITS.filter(s=>s!==Suit.JOKER).map(s => {
+                                                        const taken = usedSuits.includes(s) || decls.some((x,xi)=>xi!==i && x.suit===s);
+                                                        return (
+                                                            <button key={s} disabled={taken} onClick={()=>toggleSuit(i,s)} className={`w-8 h-8 rounded-full border flex items-center justify-center ${d.suit===s?'bg-blue-600 text-white':''} ${taken?'opacity-20':''}`}>{s}</button>
+                                                        )
+                                                    })}
+                                                </div>
+                                            </div>
+                                        ))}
+                                        <button disabled={decls.some(d=>!d.suit)} onClick={()=>confirmMeldWithJokers(decls)} className="bg-green-600 text-white py-3 rounded font-bold disabled:opacity-50">Confirm</button>
+                                    </div>
+                                );
+                            })()}
+                        </Modal>
+                    )}
+
+                    {roundSummary && (
+                        <Modal title="Round Summary">
+                            <div className="w-full mb-4 text-sm">
+                                <div className="grid grid-cols-3 font-bold border-b pb-1"><span>Player</span><span className="text-right">Round</span><span className="text-right">Total</span></div>
+                                {roundSummary.updatedPlayers.map((p,i) => (
+                                    <div key={p.id} className="grid grid-cols-3 py-1 border-b">
+                                        <span className={p.id===0?'font-bold text-blue-600':''}>{p.name}</span>
+                                        <span className="text-right text-red-500">+{roundSummary.roundPoints[i]}</span>
+                                        <span className="text-right font-bold">{p.score}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <button onClick={startNextRound} className="w-full bg-green-600 text-white py-3 rounded font-bold">Next Round</button>
+                        </Modal>
+                    )}
+
+                    {gameState.turnPhase === 'GAME_OVER' && (
+                        <Modal title="Game Over">
+                            <h2 className="text-center text-2xl font-bold mb-4">{gameState.winner.id===0 ? 'You Won! 🏆' : 'Bot Wins 🤖'}</h2>
+                            <button onClick={startGame} className="w-full bg-blue-600 text-white py-3 rounded font-bold">New Game</button>
+                        </Modal>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
 </html>
